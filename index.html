@@ -1,0 +1,1110 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>GraphiTool: Visualizador de Redes</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.17.0/xlsx.full.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    
+    <style>
+        html, body {
+            height: 100%;
+            margin: 0;
+            overflow: hidden; 
+            font-family: sans-serif;
+            background-color: #f4f4f4;
+        }
+
+        /* --- LAYOUT Y CONTENEDORES --- */
+        #main-layout {
+            display: flex;
+            height: calc(100% - 60px); 
+        }
+        #aside-menu {
+            width: 300px; 
+            background-color: #f8f8f8;
+            border-right: 1px solid #ddd;
+            padding: 15px;
+            box-sizing: border-box;
+            overflow-y: hidden; 
+            flex-shrink: 0;
+        }
+        #chart-container {
+            flex-grow: 1; 
+            position: relative;
+        }
+        svg {
+            width: 100%;
+            height: 100%;
+            background-color: #fff;
+        }
+
+        /* --- FOOTER Y CONTROLES --- */
+        #footer {
+            height: 60px;
+            width: 100%;
+            background-color: #333;
+            color: white;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            padding: 0 20px;
+            box-sizing: border-box;
+            justify-content: space-between;
+        }
+        #footer input[type="file"] { display: none; }
+        #footer label, #footer button {
+            background-color: #007bff;
+            color: white;
+            padding: 10px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            border: none;
+            transition: background-color 0.3s;
+            font-size: 14px;
+        }
+        #footer label:hover, #footer button:hover {
+            background-color: #0056b3;
+        }
+        #file-controls { display: flex; gap: 10px; }
+        
+        /* --- ASIDE MENU --- */
+        #search-bar {
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+            margin-bottom: 10px;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        #node-list-container {
+            max-height: calc(100% - 100px); 
+            overflow-y: scroll; 
+            border: 1px solid #eee;
+            border-radius: 4px;
+            padding: 5px;
+        }
+        #node-list-container::-webkit-scrollbar {
+            display: none;
+        }
+        #node-list-container {
+            -ms-overflow-style: none;  
+            scrollbar-width: none;  
+        }
+        
+        .node-list-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 5px 0;
+            border-bottom: 1px dotted #eee;
+            cursor: pointer;
+        }
+        .node-list-item:hover {
+            background-color: #f0f0f0;
+        }
+        .node-name {
+            font-size: 14px;
+            color: #333;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            flex-grow: 1;
+        }
+        .visibility-toggle {
+            font-size: 16px;
+            cursor: pointer;
+            margin-left: 10px;
+            color: #555; 
+        }
+        .visibility-toggle.hidden {
+            color: #d32f2f; 
+        }
+        #filter-hidden-container {
+            margin-top: 10px;
+            font-size: 14px;
+            color: #555;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            margin-bottom: 5px;
+        }
+
+        /* --- ESTILOS DEL GRAFO --- */
+        .link {
+            fill: none; 
+            stroke: #999;
+            stroke-opacity: 0.6;
+            stroke-width: 1.5px;
+            cursor: help; 
+        }
+        .node circle {
+            stroke: #fff;
+            stroke-width: 2px;
+            cursor: move;
+        }
+        .node text {
+            fill: #000; 
+            text-anchor: middle;
+            pointer-events: none; 
+            font-weight: bold; 
+        }
+        
+        /* Estilo para nodos seleccionados */
+        .node.selected circle {
+            stroke: #ff0000;
+            stroke-width: 4px;
+        }
+
+        /* Estilo para el cuadro de selección (Lasso) */
+        #selection-box {
+            fill: rgba(0, 0, 255, 0.1);
+            stroke: blue;
+            stroke-dasharray: 4;
+            pointer-events: none; 
+        }
+        
+        .hidden-element {
+            visibility: hidden !important;
+        }
+        
+        /* Tooltip */
+        #tooltip {
+            position: absolute;
+            opacity: 0;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 3px;
+            pointer-events: none;
+            z-index: 100;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="main-layout">
+        <aside id="aside-menu">
+            <h2>Control de Nodos</h2>
+            <p style="font-size: 12px; color: #555;">
+                Para mover nodos en grupo: **Mantén presionada la tecla Ctrl/Cmd** y arrastra el ratón sobre el lienzo.
+            </p>
+            <input type="text" id="search-bar" placeholder="Buscar nombre de nodo...">
+            
+            <div id="filter-hidden-container">
+                <input type="checkbox" id="filter-hidden-checkbox">
+                <label for="filter-hidden-checkbox">Mostrar sólo nodos ocultos</label>
+            </div>
+
+            <div id="node-list-container">
+                <div id="node-list">
+                    <p style="color: #999; margin: 0; font-size: 12px;">Cargue datos para ver la lista de nodos.</p>
+                </div>
+            </div>
+        </aside>
+
+        <div id="chart-container">
+        </div>
+    </div>
+
+    <div id="tooltip"></div>
+
+    <footer id="footer">
+        <span>Herramienta de Visualización de Red (Front-end)</span>
+        
+        <div id="file-controls">
+            <label for="file-upload-data">Cargar Datos (Simple)</label>
+            <input type="file" id="file-upload-data" accept=".xlsx, .xls, .csv">
+            
+            <label for="file-upload-coords">Cargar Datos (Organizados)</label>
+            <input type="file" id="file-upload-coords" accept=".xlsx, .xls, .csv">
+
+            <button id="download-coords-btn" disabled>Descargar (Organizados)</button>
+            <button id="capture-svg-btn">Capturar SVG</button>
+        </div>
+    </footer>
+
+    <script>
+        // --- 1. CONFIGURACIÓN INICIAL Y HERRAMIENTAS ---
+        const container = document.getElementById('chart-container');
+        const svg = d3.select(container).append("svg");
+        const tooltip = d3.select("#tooltip");
+        const downloadBtn = document.getElementById('download-coords-btn');
+        const captureSvgBtn = document.getElementById('capture-svg-btn'); 
+        const nodeMenu = d3.select("#node-list");
+        const searchBar = document.getElementById('search-bar');
+        const filterHiddenCheckbox = document.getElementById('filter-hidden-checkbox');
+
+        let simulation;
+        let currentNodes = []; 
+        let currentLinks = []; 
+        const hiddenNodes = new Set(); 
+        const selectedNodes = new Set(); 
+        
+        // *** TAMAÑO AJUSTADO ***
+        const FIXED_NODE_RADIUS = 35; 
+        const FONT_SIZE_NODE_TEXT = 10; 
+        
+        let gGraph; 
+        let gSelection; 
+        let selectionBox; 
+        let currentTransform = d3.zoomIdentity; 
+        const ARROW_HEAD_OFFSET = 8; 
+        
+        const colorRange = [
+            "#cccccc", "#e0f7fa", "#b2ebf2", "#80deea", "#4dd0e1", 
+            "#26c6da", "#00bcd4", "#0097a7", "#00838f", "#006064", "#054e58"  
+        ];
+        
+        // **********************************************
+        // *** CONFIGURACIÓN DE CARGA AUTOMÁTICA (MODIFICAR ESTA SECCIÓN) ***
+        // **********************************************
+        // ¡REEMPLAZA ESTA URL con la URL Raw de tu archivo en GitHub!
+        const AUTO_LOAD_GITHUB_URL = "https://raw.githubusercontent.com/USUARIO/REPOSITORIO/RAMA/archivo_con_coordenadas.xlsx"; 
+        const AUTO_LOAD_ON_START = true; // Activar la carga automática
+
+        // ----------------------------------------------------------------------------------
+        // FUNCIONES AUXILIARES (WRAP TEXT)
+        // ----------------------------------------------------------------------------------
+        function wrapText(textNode, nodeRadius) {
+            const text = textNode.text();
+            if (!text || typeof text !== 'string') return;
+
+            const words = text.split(/\s+/).reverse();
+            let word;
+            let line = [];
+            let lineNumber = 0;
+            const lineHeight = 1.1; 
+            
+            const fontSize = FONT_SIZE_NODE_TEXT; 
+            const maxWidth = nodeRadius * 1.85; 
+            
+            const initialY = textNode.attr("y") ? parseFloat(textNode.attr("y")) : 0;
+            
+            textNode.text(null); 
+            let tspan = textNode.append("tspan").attr("x", 0).attr("y", initialY).attr("dy", "0em");
+
+            function measureText(str) {
+                const tempSvg = d3.select("body").append("svg");
+                const tempText = tempSvg.append("text")
+                    .style("font-size", fontSize + "px")
+                    .style("font-weight", "bold") 
+                    .text(str);
+                const width = tempText.node().getComputedTextLength();
+                tempSvg.remove();
+                return width;
+            }
+
+            while (word = words.pop()) {
+                line.push(word);
+                if (measureText(line.join(" ")) > maxWidth && line.length > 1) {
+                    line.pop(); 
+                    tspan.text(line.join(" ")); 
+                    line = [word]; 
+                    tspan = textNode.append("tspan")
+                                    .attr("x", 0)
+                                    .attr("y", initialY)
+                                    .attr("dy", (++lineNumber * lineHeight) + "em") 
+                                    .text(word);
+                } else {
+                    tspan.text(line.join(" "));
+                }
+            }
+
+            const totalLines = lineNumber + 1; 
+            const totalTextHeight = totalLines * lineHeight * fontSize;
+            const translateY = -totalTextHeight / 2 + (lineHeight * fontSize / 2); 
+            textNode.attr("transform", `translate(0, ${translateY})`);
+        }
+
+        // --- FUNCIONES DE VISIBILIDAD, SELECCIÓN Y MENÚ ---
+        
+        function updateNodeVisibility() {
+            if (gGraph) {
+                gGraph.selectAll(".node")
+                    .classed("hidden-element", d => hiddenNodes.has(d.id));
+
+                gGraph.selectAll(".link")
+                    .classed("hidden-element", d => {
+                        return hiddenNodes.has(d.source.id) || hiddenNodes.has(d.target.id);
+                    });
+            }
+        }
+        
+        function updateNodeSelection() {
+            gGraph.selectAll(".node")
+                .classed("selected", d => selectedNodes.has(d.id));
+        }
+
+        function toggleNodeVisibility(nodeId) {
+            const nodeData = currentNodes.find(d => d.id === nodeId);
+            if (!nodeData) return;
+
+            if (hiddenNodes.has(nodeId)) {
+                hiddenNodes.delete(nodeId);
+                
+                if (nodeData.x !== undefined && nodeData.y !== undefined) {
+                    nodeData.fx = nodeData.x;
+                    nodeData.fy = nodeData.y;
+                }
+            } else {
+                hiddenNodes.add(nodeId);
+                
+                nodeData.fx = null;
+                nodeData.fy = null;
+            }
+            
+            if (simulation) simulation.alpha(0.1).restart();
+            
+            updateNodeVisibility();
+            drawNodeMenu(currentNodes); 
+        }
+
+        function drawNodeMenu(nodes) {
+            nodeMenu.html(""); 
+            
+            const searchTerm = searchBar.value.toLowerCase();
+            const filterToHidden = filterHiddenCheckbox.checked; 
+
+            const filteredNodes = nodes.filter(d => {
+                const matchesSearch = d.name.toLowerCase().includes(searchTerm);
+                const isHidden = hiddenNodes.has(d.id);
+                
+                let passesFilter;
+
+                if (filterToHidden) {
+                    passesFilter = isHidden;
+                } else {
+                    passesFilter = true;
+                }
+
+                return matchesSearch && passesFilter;
+            });
+
+            filteredNodes.sort((a, b) => a.name.localeCompare(b.name));
+
+            nodeMenu.selectAll(".node-list-item")
+                .data(filteredNodes, d => d.id)
+                .join(
+                    enter => {
+                        const div = enter.append("div")
+                            .attr("class", "node-list-item")
+                            .on("click", (event, d) => toggleNodeVisibility(d.id));
+                        
+                        div.append("span")
+                            .attr("class", "node-name")
+                            .text(d => d.name.length > 30 ? d.name.substring(0, 30) + "..." : d.name);
+                        
+                        div.append("i")
+                            .attr("class", "fas fa-eye visibility-toggle")
+                            .classed("hidden", d => hiddenNodes.has(d.id));
+                        
+                        return div;
+                    },
+                    update => {
+                        update.select(".visibility-toggle")
+                            .classed("hidden", d => hiddenNodes.has(d.id));
+                        
+                        return update;
+                    },
+                    exit => exit.remove()
+                );
+            
+            if (nodes.length > 0 && filteredNodes.length === 0) {
+                 nodeMenu.html(`<p style="color: #999; margin: 0; font-size: 12px;">No hay coincidencias para "${searchTerm}" con los filtros aplicados.</p>`);
+            }
+        }
+
+        searchBar.addEventListener('input', () => {
+            if (currentNodes.length > 0) drawNodeMenu(currentNodes);
+        });
+
+        filterHiddenCheckbox.addEventListener('change', () => {
+            if (currentNodes.length > 0) drawNodeMenu(currentNodes);
+        });
+
+        function calculateNodeSizes(nodes, links) {
+            const nodeDegrees = {};
+            nodes.forEach(node => nodeDegrees[node.id] = 0); 
+            
+            links.forEach(link => {
+                if (nodeDegrees[link.target] !== undefined) {
+                    nodeDegrees[link.target]++; 
+                }
+            });
+
+            nodes.forEach(node => {
+                node.degree = nodeDegrees[node.id] > 0 ? nodeDegrees[node.id] : 1; 
+                node.radius = FIXED_NODE_RADIUS; 
+            });
+            return nodes;
+        }
+
+        function defineArrowMarker(svg) {
+            svg.select("defs").remove();
+            const defs = svg.append("defs");
+            defs.append("marker")
+                .attr("id", "arrowhead")
+                .attr("viewBox", "0 -5 10 10")
+                .attr("refX", ARROW_HEAD_OFFSET) 
+                .attr("refY", 0)
+                .attr("markerWidth", 6)
+                .attr("markerHeight", 6)
+                .attr("orient", "auto")
+                .append("path")
+                .attr("d", "M0,-5L10,0L0,5")
+                .attr("fill", "#999");
+        }
+
+        document.getElementById('file-upload-data').addEventListener('change', (e) => handleFile(e, false), false);
+        document.getElementById('file-upload-coords').addEventListener('change', (e) => handleFile(e, true), false);
+        downloadBtn.addEventListener('click', downloadCoords, false);
+        captureSvgBtn.addEventListener('click', captureSvg, false); 
+
+        function handleFile(e, expectCoords) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                try {
+                    const data = new Uint8Array(event.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    const sheetName = workbook.SheetNames[0];
+                    const json = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
+
+                    hiddenNodes.clear(); 
+                    selectedNodes.clear();
+                    
+                    processData(json, expectCoords);
+                    downloadBtn.disabled = false;
+                } catch (error) {
+                    alert("Error al procesar el archivo. Asegúrate de que es un XLS o CSV válido.");
+                    console.error(error);
+                }
+                e.target.value = '';
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        function downloadCoords() {
+            if (currentLinks.length === 0) {
+                alert("No hay datos cargados para descargar.");
+                return;
+            }
+
+            const exportData = currentLinks.map(link => {
+                const sourceX = link.source.x || 0;
+                const sourceY = link.source.y || 0;
+                const targetX = link.target.x || 0;
+                const targetY = link.target.y || 0;
+
+                return {
+                    From: link.source.id,
+                    CFrom: `${sourceX.toFixed(2)},${sourceY.toFixed(2)}`,
+                    To: link.target.id,
+                    CTo: `${targetX.toFixed(2)},${targetY.toFixed(2)}`,
+                    Label: link.label
+                };
+            });
+            
+            const ws = XLSX.utils.json_to_sheet(exportData);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Red Organizada");
+
+            XLSX.writeFile(wb, "red_organizada.xlsx");
+        }
+        
+        // ----------------------------------------------------------------------------------
+        // *** FUNCIÓN CARGA DE URL UNIFICADA (Para carga automática y manual) ***
+        // ----------------------------------------------------------------------------------
+        function loadFromUrl(url, expectCoords) { 
+            if (!url.startsWith('http')) {
+                console.warn("URL inválida. Saltando carga.");
+                return;
+            }
+
+            console.log(`Intentando cargar datos desde: ${url} (Organizado: ${expectCoords})`);
+            
+            fetch(url)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`Error HTTP: ${response.status} - Verifica la URL y permisos.`);
+                    }
+                    return response.arrayBuffer(); 
+                })
+                .then(buffer => {
+                    const data = new Uint8Array(buffer);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    const sheetName = workbook.SheetNames[0];
+                    const json = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
+
+                    hiddenNodes.clear();
+                    selectedNodes.clear();
+                    
+                    processData(json, expectCoords); 
+                    downloadBtn.disabled = false;
+                    console.log("✅ Datos cargados con éxito.");
+
+                    if (expectCoords) {
+                        // Centrar la vista si cargamos coordenadas organizadas
+                        setTimeout(() => {
+                            centerAndZoom(currentNodes);
+                        }, 50);
+                    }
+
+                })
+                .catch(error => {
+                    console.error("❌ Error en la carga de URL:", error.message);
+                    if (!AUTO_LOAD_ON_START || !url.includes(AUTO_LOAD_GITHUB_URL)) {
+                        alert("❌ Error al cargar el archivo. Revisa la consola.");
+                    }
+                });
+        }
+        // ----------------------------------------------------------------------------------
+
+
+        // ----------------------------------------------------------------------------------
+        // *** FUNCIÓN CAPTURE SVG CORREGIDA ***
+        // ----------------------------------------------------------------------------------
+        function captureSvg() {
+            if (currentNodes.length === 0) {
+                alert("No hay nodos para capturar.");
+                return;
+            }
+            
+            const nodesVisible = currentNodes.filter(d => !hiddenNodes.has(d.id));
+            if (nodesVisible.length === 0) {
+                alert("No hay nodos visibles para capturar.");
+                return;
+            }
+
+            const padding = 50; 
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+            // 1. Calcular límites (bbox) de los nodos visibles
+            nodesVisible.forEach(d => {
+                const r = FIXED_NODE_RADIUS; 
+                minX = Math.min(minX, d.x - r); 
+                minY = Math.min(minY, d.y - r);
+                maxX = Math.max(maxX, d.x + r);
+                maxY = Math.max(maxY, d.y + r);
+            });
+
+            const finalMinX = minX - padding;
+            const finalMinY = minY - padding;
+            const finalWidth = (maxX - minX) + 2 * padding;
+            const finalHeight = (maxY - minY) + 2 * padding;
+            
+            // 2. Crear un SVG temporal para la exportación
+            const tempSvg = d3.create("svg")
+                .attr("xmlns", "http://www.w3.org/2000/svg")
+                .attr("viewBox", `${finalMinX} ${finalMinY} ${finalWidth} ${finalHeight}`)
+                .attr("width", finalWidth)
+                .attr("height", finalHeight);
+
+            // 3. Añadir el marcador de flecha (defs)
+            const defs = tempSvg.append("defs");
+            defs.html(svg.select("defs").html());
+
+            // 4. Clonar solo los elementos visibles del gGraph
+            const clonedG = tempSvg.append("g");
+            
+            // Clonar enlaces visibles y recalcular la ruta
+            const linksData = currentLinks.filter(d => !hiddenNodes.has(d.source.id) && !hiddenNodes.has(d.target.id));
+
+            clonedG.append("g")
+                .attr("class", "links")
+                .selectAll("path")
+                .data(linksData)
+                .join("path")
+                .attr("class", "link")
+                .attr("marker-end", "url(#arrowhead)")
+                .attr("d", d => {
+                    // Recalcular la ruta D de la misma manera que en el tick
+                    const radiusTarget = FIXED_NODE_RADIUS; 
+                    const dx = d.target.x - d.source.x;
+                    const dy = d.target.y - d.source.y;
+                    const dr = Math.sqrt(dx * dx + dy * dy); 
+                    
+                    const targetDistance = radiusTarget + ARROW_HEAD_OFFSET; 
+                    
+                    if (dr < targetDistance) {
+                        return `M${d.source.x},${d.source.y}A${dr},${dr} 0 0,1 ${d.target.x},${d.target.y}`;
+                    }
+
+                    const ratio = (dr - targetDistance) / dr;
+                    const Tx = d.source.x + (dx * ratio);
+                    const Ty = d.source.y + (dy * ratio);
+
+                    return `M${d.source.x},${d.source.y}A${dr},${dr} 0 0,1 ${Tx},${Ty}`;
+                });
+                
+            // Clonar nodos visibles
+            const nodesG = clonedG.append("g").attr("class", "nodes")
+                .selectAll(".node")
+                .data(nodesVisible)
+                .join("g")
+                .attr("class", "node")
+                .attr("transform", d => `translate(${d.x},${d.y})`); 
+
+            nodesG.append("circle")
+                .attr("r", FIXED_NODE_RADIUS)
+                .attr("fill", d => {
+                    const colorIndex = Math.min(d.degree - 1, colorRange.length - 1);
+                    return colorRange[colorIndex] || colorRange[colorRange.length - 1]; 
+                })
+                .attr("stroke", d => selectedNodes.has(d.id) ? '#ff0000' : '#fff')
+                .attr("stroke-width", d => selectedNodes.has(d.id) ? '4px' : '2px');
+
+            nodesG.append("text")
+                .text(d => d.name)
+                .style("font-size", FONT_SIZE_NODE_TEXT + "px") 
+                .each(function(d) {
+                    // Volver a aplicar el wrap text para que esté en el contexto del SVG de exportación
+                    wrapText(d3.select(this), FIXED_NODE_RADIUS); 
+                });
+
+
+            // 5. Añadir estilos CSS en línea (CRUCIAL para SVG autónomo)
+            const style = document.createElement('style');
+            style.textContent = `
+                .link { fill: none; stroke: #999; stroke-opacity: 0.6; stroke-width: 1.5px; }
+                .node circle { stroke: #fff; stroke-width: 2px; }
+                .node text { font-size: ${FONT_SIZE_NODE_TEXT}px; fill: #000; text-anchor: middle; font-weight: bold; pointer-events: none; } 
+                .node.selected circle { stroke: #ff0000; stroke-width: 4px; }
+                #arrowhead path { fill: #999; } 
+            `;
+            tempSvg.node().prepend(style);
+
+
+            // 6. Serializar y descargar
+            const serializer = new XMLSerializer();
+            let svgString = serializer.serializeToString(tempSvg.node());
+            
+            svgString = '<?xml version="1.0" standalone="no"?>\r\n' + svgString;
+            
+            const svgBlob = new Blob([svgString], { type: "image/svg+xml;charset=utf-8" });
+            const svgUrl = URL.createObjectURL(svgBlob);
+            
+            const downloadLink = document.createElement("a");
+            downloadLink.href = svgUrl;
+            downloadLink.download = "captura_red_optimizada.svg";
+            document.body.appendChild(downloadLink);
+            downloadLink.click();
+            document.body.removeChild(downloadLink);
+            
+            URL.revokeObjectURL(svgUrl); 
+        }
+
+        function processData(rawLinks, expectCoords) {
+            const nodeSet = new Map();
+            const links = [];
+            let hasCoords = false;
+
+            rawLinks.forEach(d => {
+                const sourceId = String(d.From || d.from || '').trim();
+                const targetId = String(d.To || d.to || '').trim();
+                const label = d.Label || d.label ? String(d.Label || d.label).trim() : '';
+                
+                if (sourceId && targetId) {
+                    if (!nodeSet.has(sourceId)) nodeSet.set(sourceId, { id: sourceId, name: sourceId });
+                    if (!nodeSet.has(targetId)) nodeSet.set(targetId, { id: targetId, name: targetId });
+                    
+                    if (expectCoords && d.CFrom && d.CTo) {
+                        hasCoords = true;
+                        
+                        const [sfx, sfy] = String(d.CFrom).split(',').map(v => parseFloat(v.trim()));
+                        if (!isNaN(sfx) && !isNaN(sfy)) {
+                            nodeSet.get(sourceId).x = sfx;
+                            nodeSet.get(sourceId).y = sfy;
+                            nodeSet.get(sourceId).fx = sfx; 
+                            nodeSet.get(sourceId).fy = sfy;
+                        }
+
+                        const [tfx, tfy] = String(d.CTo).split(',').map(v => parseFloat(v.trim()));
+                        if (!isNaN(tfx) && !isNaN(tfy)) {
+                            nodeSet.get(targetId).x = tfx;
+                            nodeSet.get(targetId).y = tfy;
+                            nodeSet.get(targetId).fx = tfx; 
+                            nodeSet.get(targetId).fy = tfy;
+                        }
+                    }
+                    
+                    links.push({ source: sourceId, target: targetId, label: label });
+                }
+            });
+
+            const nodes = Array.from(nodeSet.values());
+            
+            if (links.length > 0) {
+                const nodesWithProperties = calculateNodeSizes(nodes, links);
+                drawNetwork(nodesWithProperties, links, hasCoords);
+                drawNodeMenu(nodesWithProperties); 
+            } else {
+                console.error("El archivo no contiene las columnas 'From', 'To' y 'Label' esperadas o está vacío.");
+            }
+        }
+
+        function centerAndZoom(nodes) {
+            const width = container.clientWidth;
+            const height = container.clientHeight;
+            const padding = 50;
+
+            const visibleNodes = nodes.filter(d => !hiddenNodes.has(d.id));
+            if (visibleNodes.length === 0) return;
+
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+            visibleNodes.forEach(d => {
+                const r = FIXED_NODE_RADIUS;
+                minX = Math.min(minX, d.x - r);
+                minY = Math.min(minY, d.y - r);
+                maxX = Math.max(maxX, d.x + r);
+                maxY = Math.max(maxY, d.y + r);
+            });
+
+            const dataWidth = maxX - minX;
+            const dataHeight = maxY - minY;
+            
+            const scaleX = (width - 2 * padding) / dataWidth;
+            const scaleY = (height - 2 * padding) / dataHeight;
+            const scale = Math.min(scaleX, scaleY, 1.0); 
+
+            if (!isFinite(scale) || scale <= 0) return;
+            
+            const translateX = width / 2 - (minX + dataWidth / 2) * scale;
+            const translateY = height / 2 - (minY + dataHeight / 2) * scale;
+            
+            currentTransform = d3.zoomIdentity.translate(translateX, translateY).scale(scale); 
+
+            svg.call(zoom.transform, currentTransform);
+        }
+
+        // --- FUNCIÓN ZOOM CON FILTRO DE TECLA ---
+        const zoom = d3.zoom()
+            .scaleExtent([0.1, 10]) 
+            .filter(event => !event.ctrlKey && !event.metaKey) 
+            .on("zoom", (event) => {
+                currentTransform = event.transform; 
+                gGraph.attr("transform", currentTransform);
+                gSelection.attr("transform", currentTransform); 
+            });
+
+        // ----------------------------------------------------------------------------------
+        // *** FUNCIÓN DRAG (GRUPAL) ***
+        // ----------------------------------------------------------------------------------
+        function drag(simulation) {
+            let draggedNode = null;
+            
+            function dragstarted(event, d) {
+                if (!event.active) simulation.alphaTarget(0.3).restart();
+                
+                // Si el nodo NO está en el grupo seleccionado, deseleccionar todo y seleccionar este.
+                if (!selectedNodes.has(d.id)) {
+                    selectedNodes.clear();
+                    selectedNodes.add(d.id);
+                    updateNodeSelection();
+                }
+
+                // Fijar todos los nodos seleccionados
+                draggedNode = d;
+                selectedNodes.forEach(id => {
+                    const node = currentNodes.find(n => n.id === id);
+                    if (node) {
+                        node.fx = node.x; 
+                        node.fy = node.y;
+                    }
+                });
+            }
+            
+            function dragged(event, d) {
+                if (!draggedNode) return;
+                
+                // Calcular el desplazamiento (delta)
+                const dx = event.x - draggedNode.fx;
+                const dy = event.y - draggedNode.fy;
+
+                // Mover la posición fija de *todos* los nodos seleccionados
+                selectedNodes.forEach(id => {
+                    const node = currentNodes.find(n => n.id === id);
+                    if (node) {
+                        node.fx = node.x + dx; 
+                        node.fy = node.y + dy;
+                    }
+                });
+                
+                // Forzar un tick para la respuesta visual inmediata
+                simulation.tick();
+                gGraph.selectAll(".node").attr("transform", n => `translate(${n.x},${n.y})`);
+            }
+            
+            function dragended(event, d) {
+                if (!event.active) simulation.alphaTarget(0);
+                
+                // Liberar (poner fx/fy a null)
+                if (simulation.alpha() <= 0.001) {
+                    selectedNodes.forEach(id => {
+                        const node = currentNodes.find(n => n.id === id);
+                        if (node) {
+                            node.fx = null;
+                            node.fy = null;
+                        }
+                    });
+                }
+                draggedNode = null; 
+            }
+            return d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended);
+        }
+
+        // ----------------------------------------------------------------------------------
+        // FUNCIÓN: SELECCIÓN DE GRUPO CON ARRASTRE (LASSO SELECTION)
+        // ----------------------------------------------------------------------------------
+        function lassoSelection() {
+            let startPoint;
+            
+            function dragstarted(event) {
+                if (!event.ctrlKey && !event.metaKey) return; 
+
+                if (!event.shiftKey) {
+                    selectedNodes.clear();
+                    updateNodeSelection();
+                }
+
+                startPoint = [event.x, event.y];
+                
+                selectionBox
+                    .attr("x", startPoint[0])
+                    .attr("y", startPoint[1])
+                    .attr("width", 0)
+                    .attr("height", 0)
+                    .style("opacity", 1);
+            }
+
+            function dragged(event) {
+                if (!event.ctrlKey && !event.metaKey) return;
+                
+                const currentX = event.x;
+                const currentY = event.y;
+                
+                const x = Math.min(startPoint[0], currentX);
+                const y = Math.min(startPoint[1], currentY);
+                const width = Math.abs(currentX - startPoint[0]);
+                const height = Math.abs(currentY - startPoint[1]);
+                
+                selectionBox
+                    .attr("x", x)
+                    .attr("y", y)
+                    .attr("width", width)
+                    .attr("height", height);
+
+                // Obtener las coordenadas en el espacio del grafo (des-transformado)
+                const invT = currentTransform.invert([x, y]);
+                const invW = width / currentTransform.k;
+                const invH = height / currentTransform.k;
+                
+                const selectionRect = {
+                    x1: invT[0],
+                    y1: invT[1],
+                    x2: invT[0] + invW,
+                    y2: invT[1] + invH
+                };
+
+                // Determinar nodos dentro de la caja
+                gGraph.selectAll(".node").each(function(d) {
+                    const isContained = d.x >= selectionRect.x1 && d.x <= selectionRect.x2 &&
+                                      d.y >= selectionRect.y1 && d.y <= selectionRect.y2;
+                    
+                    if (isContained && !hiddenNodes.has(d.id)) {
+                        d3.select(this).classed("selected", true);
+                        selectedNodes.add(d.id);
+                    } else if (!event.shiftKey) {
+                        // Si no se presiona Shift, deseleccionar los que salen
+                        d3.select(this).classed("selected", false);
+                        selectedNodes.delete(d.id);
+                    }
+                });
+            }
+
+            function dragended(event) {
+                if (!event.ctrlKey && !event.metaKey) return;
+                
+                // Ocultar el cuadro de selección
+                selectionBox.style("opacity", 0).attr("width", 0).attr("height", 0);
+                updateNodeSelection(); 
+            }
+
+            return d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended);
+        }
+
+        function ticked() {
+            gGraph.selectAll(".link")
+                .attr("d", d => {
+                    const radiusTarget = FIXED_NODE_RADIUS; 
+                    const dx = d.target.x - d.source.x;
+                    const dy = d.target.y - d.source.y;
+                    const dr = Math.sqrt(dx * dx + dy * dy); 
+                    
+                    const targetDistance = radiusTarget + ARROW_HEAD_OFFSET; 
+                    
+                    if (dr < targetDistance) {
+                        // Si están demasiado cerca, dibujar sin ajustar (puede superponerse)
+                        return `M${d.source.x},${d.source.y}L${d.target.x},${d.target.y}`;
+                    }
+
+                    // Calcular el punto final T ajustado al radio del nodo target
+                    const ratio = (dr - targetDistance) / dr;
+                    const Tx = d.source.x + (dx * ratio);
+                    const Ty = d.source.y + (dy * ratio);
+
+                    return `M${d.source.x},${d.source.y}L${Tx},${Ty}`;
+                });
+            
+            gGraph.selectAll(".node")
+                .attr("transform", d => `translate(${d.x},${d.y})`);
+        }
+
+        function drawNetwork(nodes, links, hasCoords) {
+            currentNodes = nodes;
+            currentLinks = links;
+            
+            svg.selectAll("*").remove(); 
+            defineArrowMarker(svg); 
+
+            gSelection = svg.append("g").attr("class", "selection-group");
+            selectionBox = gSelection.append("rect")
+                .attr("id", "selection-box")
+                .style("opacity", 0);
+
+            gGraph = svg.append("g").attr("class", "graph-group");
+
+            const linkElements = gGraph.append("g")
+                .attr("class", "links")
+                .selectAll("path")
+                .data(links)
+                .join("path")
+                .attr("class", "link")
+                .attr("marker-end", "url(#arrowhead)")
+                .on("mouseover", (event, d) => {
+                    tooltip.style("opacity", 1)
+                        .html(`<strong>${d.source.id}</strong> ➡️ <strong>${d.target.id}</strong><br>Etiqueta: ${d.label || 'N/A'}`);
+                })
+                .on("mousemove", (event) => {
+                    tooltip.style("left", (event.pageX + 10) + "px")
+                        .style("top", (event.pageY - 10) + "px");
+                })
+                .on("mouseout", () => {
+                    tooltip.style("opacity", 0);
+                });
+            
+            const nodeElements = gGraph.append("g")
+                .attr("class", "nodes")
+                .selectAll("g")
+                .data(nodes, d => d.id)
+                .join("g")
+                .attr("class", "node")
+                .call(drag(simulation)) 
+                .on("click", (event, d) => {
+                    if (event.ctrlKey || event.metaKey) return; 
+
+                    if (event.shiftKey) {
+                        if (selectedNodes.has(d.id)) {
+                            selectedNodes.delete(d.id);
+                        } else {
+                            selectedNodes.add(d.id);
+                        }
+                    } else {
+                        selectedNodes.clear();
+                        selectedNodes.add(d.id);
+                    }
+                    updateNodeSelection();
+                })
+                .on("mouseover", (event, d) => {
+                    tooltip.style("opacity", 1)
+                        .html(`<strong>${d.name}</strong><br>Grado: ${d.degree}`);
+                })
+                .on("mousemove", (event) => {
+                    tooltip.style("left", (event.pageX + 10) + "px")
+                        .style("top", (event.pageY - 10) + "px");
+                })
+                .on("mouseout", () => {
+                    tooltip.style("opacity", 0);
+                });
+
+
+            nodeElements.append("circle")
+                .attr("r", d => d.radius)
+                .attr("fill", d => {
+                    const colorIndex = Math.min(d.degree - 1, colorRange.length - 1);
+                    return colorRange[colorIndex] || colorRange[colorRange.length - 1]; 
+                });
+            
+            nodeElements.append("text")
+                .text(d => d.name)
+                .style("font-size", FONT_SIZE_NODE_TEXT + "px")
+                .each(function(d) { wrapText(d3.select(this), d.radius); });
+
+            // Reaplicar zoom y drag
+            svg.call(zoom); 
+            svg.call(d3.drag()
+                .filter(event => event.ctrlKey || event.metaKey) 
+                .on("start", lassoSelection().on("start"))
+                .on("drag", lassoSelection().on("drag"))
+                .on("end", lassoSelection().on("end")));
+
+            // Reiniciar o iniciar simulación
+            if (simulation) simulation.stop();
+
+            const width = container.clientWidth;
+            const height = container.clientHeight;
+
+            simulation = d3.forceSimulation(nodes)
+                .force("link", d3.forceLink(links).id(d => d.id).distance(150))
+                .force("charge", d3.forceManyBody().strength(-1000))
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .on("tick", ticked);
+
+            if (hasCoords) {
+                // Desactivar la simulación para coordenadas fijas
+                simulation.alpha(0.001).stop(); 
+                ticked(); 
+                centerAndZoom(nodes);
+            } else {
+                simulation.alpha(1).restart();
+                currentTransform = d3.zoomIdentity;
+                svg.call(zoom.transform, currentTransform);
+            }
+
+            updateNodeVisibility(); 
+        }
+        
+        // ----------------------------------------------------------------------------------
+        // *** INICIO DE LA APLICACIÓN: Carga Automática ***
+        // ----------------------------------------------------------------------------------
+
+        window.addEventListener('load', () => {
+            // Asegurarse de que el zoom esté inicializado.
+            svg.call(zoom);
+
+            if (AUTO_LOAD_ON_START && AUTO_LOAD_GITHUB_URL) {
+                // Carga el archivo de la URL de GitHub
+                // El segundo argumento 'true' indica que debe esperar las columnas CFrom y CTo.
+                loadFromUrl(AUTO_LOAD_GITHUB_URL, true); 
+            } else {
+                // Inicializa el SVG con un grupo vacío si no hay carga automática
+                gSelection = svg.append("g").attr("class", "selection-group");
+                selectionBox = gSelection.append("rect").attr("id", "selection-box").style("opacity", 0);
+                gGraph = svg.append("g").attr("class", "graph-group");
+            }
+        });
+    </script>
+</body>
+</html>
